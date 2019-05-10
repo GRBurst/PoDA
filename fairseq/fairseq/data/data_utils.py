@@ -12,7 +12,7 @@ import os
 import numpy as np
 import torch
 
-from . import FairseqDataset
+from . import FairseqDataset, LanguagePairDatasetMerge
 
 
 def infer_language_pair(path):
@@ -133,7 +133,7 @@ class EpochBatchIterator(object):
         self.shard_id = shard_id
 
         with numpy_seed(self.seed):
-            self.frozen_batches = tuple(self._batch_generator())
+            self.frozen_batches = tuple(self._batch_generator(self.dataset, 0))
 
         self.epoch = 0
         self._cur_epoch_itr = None
@@ -193,7 +193,7 @@ class EpochBatchIterator(object):
             batch_sampler=ShardedIterator(batches, self.num_shards, self.shard_id, fill_value=[]),
         ))
 
-    def _batch_generator(self):
+    def _batch_generator(self, dataset, start_idx):
         batch = []
 
         def is_batch_full(num_tokens):
@@ -208,17 +208,17 @@ class EpochBatchIterator(object):
         sample_len = 0
         sample_lens = []
         ignored = []
-        for idx in self.dataset.ordered_indices():
-            if not self.dataset.valid_size(idx, self.max_positions):
+        for idx in dataset.ordered_indices():
+            if not dataset.valid_size(idx, self.max_positions):
                 if self.ignore_invalid_inputs:
-                    ignored.append(idx)
+                    ignored.append(idx + start_idx)
                     continue
                 raise Exception((
                     'Size of sample #{} is invalid, max_positions={}, skip this '
                     'example with --skip-invalid-size-inputs-valid-test'
-                ).format(idx, self.max_positions))
+                ).format(idx + start_idx, self.max_positions))
 
-            sample_lens.append(self.dataset.num_tokens(idx))
+            sample_lens.append(dataset.num_tokens(idx))
             sample_len = max(sample_len, sample_lens[-1])
             num_tokens = (len(batch) + 1) * sample_len
             if is_batch_full(num_tokens):
@@ -231,7 +231,7 @@ class EpochBatchIterator(object):
                 sample_lens = sample_lens[mod_len:]
                 sample_len = max(sample_lens) if len(sample_lens) > 0 else 0
 
-            batch.append(idx)
+            batch.append(idx + start_idx)
 
         if len(batch) > 0:
             yield batch
@@ -256,3 +256,80 @@ def numpy_seed(seed):
         yield
     finally:
         np.random.set_state(state)
+
+
+class EpochBatchIteratorDynamic(EpochBatchIterator):
+
+    """Epoch batch iterator that supports dataset dict."""
+    def __init__(
+        self, dataset_dict, max_tokens=None, max_sentences=None, max_positions=None,
+        ignore_invalid_inputs=False, required_batch_size_multiple=1, seed=1,
+        num_shards=1, shard_id=0,
+    ):
+        self.dataset_dict = dataset_dict
+        self.dataset_merge = LanguagePairDatasetMerge(dataset_dict)
+        self.max_tokens = max_tokens if max_tokens is not None else float('Inf')
+        self.max_sentences = max_sentences if max_sentences is not None else float('Inf')
+        self.max_positions = max_positions
+        self.ignore_invalid_inputs = ignore_invalid_inputs
+        self.bsz_mult = required_batch_size_multiple
+        self.seed = seed
+        self.num_shards = num_shards
+        self.shard_id = shard_id
+        
+        self.dataset_idx_range = {}
+        self.batch_count = 0
+        with numpy_seed(self.seed):
+            self.frozen_batches_list = []
+            self.dynamic_batches_list = []
+            start_idx = 0
+            for k in sorted(self.dataset_dict.keys()):
+                batches = self._batch_generator(self.dataset_dict[k], start_idx=start_idx)
+                batches = tuple(batches)
+                self.batch_count += len(batches)
+
+                n_repeat = self.dataset_dict[k].n_repeat
+                batches_repeated = []
+                for r in range(int(n_repeat)):
+                    batches_repeated.extend(batches)
+                if n_repeat % 1 > 0:
+                    self.dynamic_batches_list.append((batches, n_repeat % 1))
+                
+                self.frozen_batches_list.append(batches_repeated)
+                
+                self.dataset_idx_range[k] = (start_idx, start_idx + len(self.dataset_dict[k]))  # [start, end)
+                start_idx += len(self.dataset_dict[k])
+                print("{} dataset, n_repeat={}, start_index={}, frozen_batches={}, random_repeat={}".format(k, n_repeat, start_idx, len(batches_repeated), n_repeat % 1))
+            print('all dataset, end_index={}'.format(start_idx))
+
+        self.epoch = 0
+        self._cur_epoch_itr = None
+        self._next_epoch_itr = None
+
+    def __len__(self):
+        return self.batch_count
+
+    def _get_iterator_for_epoch(self, epoch, shuffle):
+        batches = []
+        for fb in self.frozen_batches_list:
+            batches.extend(list(fb))
+
+        # dynamic batches
+        for dbs, n_repeat in self.dynamic_batches_list:
+            batches_repeated = []
+            for db in dbs:
+                if np.random.rand() < n_repeat % 1:
+                    batches_repeated.append(db)
+            batches.extend(batches_repeated)
+
+        if shuffle:
+            # set seed based on the seed and epoch number so that we get
+            # reproducible results when resuming from checkpoints
+            with numpy_seed(self.seed + epoch):
+                np.random.shuffle(batches)
+
+        return CountingIterator(torch.utils.data.DataLoader(
+            self.dataset_merge,
+            collate_fn=self.dataset_merge.collater,
+            batch_sampler=ShardedIterator(batches, self.num_shards, self.shard_id, fill_value=[]),
+        ))

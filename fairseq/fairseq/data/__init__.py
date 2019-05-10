@@ -8,8 +8,8 @@
 from .dictionary import Dictionary
 from .fairseq_dataset import FairseqDataset
 from .indexed_dataset import IndexedInMemoryDataset, IndexedRawTextDataset
-from .language_pair_dataset import LanguagePairDataset
+from .language_pair_dataset import LanguagePairDataset, LanguagePairDatasetMerge
 from .monolingual_dataset import MonolingualDataset
 from .token_block_dataset import TokenBlockDataset
 
-from .data_utils import EpochBatchIterator
+from .data_utils import EpochBatchIterator, EpochBatchIteratorDynamic

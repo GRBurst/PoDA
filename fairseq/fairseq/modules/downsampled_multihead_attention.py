@@ -34,25 +34,30 @@ class SingleHeadAttention(nn.Module):
         self.num_heads = num_heads
         self.projection = None
 
-        k_layers = []
-        v_layers = []
+        
         if self.downsample:
-            k_layers.append(Downsample(self.head_index))
-            v_layers.append(Downsample(self.head_index))
             out_proj_size = self.head_dim
         else:
             out_proj_size = self.head_dim * self.num_heads
-        if self.gated:
-            k_layers.append(GatedLinear(self.embed_dim, out_proj_size, bias=bias))
-            self.in_proj_q = GatedLinear(self.embed_dim, out_proj_size, bias=bias)
-            v_layers.append(GatedLinear(self.embed_dim, out_proj_size, bias=bias))
-        else:
-            k_layers.append(Linear(self.embed_dim, out_proj_size, bias=bias))
-            self.in_proj_q = Linear(self.embed_dim, out_proj_size, bias=bias)
-            v_layers.append(Linear(self.embed_dim, out_proj_size, bias=bias))
 
-        self.in_proj_k = nn.Sequential(*k_layers)
-        self.in_proj_v = nn.Sequential(*v_layers)
+        if self.project_input:
+            k_layers = []
+            v_layers = []
+            if self.downsample:
+                k_layers.append(Downsample(self.head_index))
+                v_layers.append(Downsample(self.head_index))
+
+            if self.gated:
+                k_layers.append(GatedLinear(self.embed_dim, out_proj_size, bias=bias))
+                self.in_proj_q = GatedLinear(self.embed_dim, out_proj_size, bias=bias)
+                v_layers.append(GatedLinear(self.embed_dim, out_proj_size, bias=bias))
+            else:
+                k_layers.append(Linear(self.embed_dim, out_proj_size, bias=bias))
+                self.in_proj_q = Linear(self.embed_dim, out_proj_size, bias=bias)
+                v_layers.append(Linear(self.embed_dim, out_proj_size, bias=bias))
+
+            self.in_proj_k = nn.Sequential(*k_layers)
+            self.in_proj_v = nn.Sequential(*v_layers)
 
         if self.downsample:
             self.out_proj = Linear(out_proj_size, self.head_dim, bias=bias)

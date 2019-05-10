@@ -60,6 +60,12 @@ class Trainer(object):
         self._num_updates = 0
         self._optim_history = None
         self._optimizer = None
+        if self.args.use_ema:
+            print('Use ema.')
+            from fairseq.utils import EMA
+            self._ema = EMA()
+            self._backup = {}
+            self._init_ema()
 
     @property
     def optimizer(self):
@@ -103,6 +109,29 @@ class Trainer(object):
             del extra_state['train_meters']
 
         return extra_state
+
+    def _apply_ema(self):
+        for name, p in self.model.named_parameters():
+            if p.requires_grad:
+                self._ema(name, p.data)
+
+    def _init_ema(self):
+        for name, p in self.model.named_parameters():
+            if p.requires_grad:
+                self._ema.register(name, p.data)
+
+    def copy_ema_params(self):
+        self._backup = {}
+        for name, p in self.model.named_parameters():
+            if p.requires_grad:
+                self._backup[name] = p.data
+                p.data = self._ema.get(name).clone()
+
+    def restore_raw_params(self):
+        for name, p in self.model.named_parameters():
+            if p.requires_grad:
+                p.data.copy_(self._backup[name])
+        self._backup = {}
 
     def train_step(self, sample, update_params=True):
         """Do forward, backward and parameter update."""
@@ -150,6 +179,8 @@ class Trainer(object):
                 # all-reduce and rescale gradients, then take an optimization step
                 grad_norm = self._all_reduce_and_rescale(grad_denom)
                 self._opt()
+                if self.args.use_ema:
+                    self._apply_ema()
 
                 # update meters
                 self.meters['wps'].update(ntokens)
@@ -241,8 +272,7 @@ class Trainer(object):
             if not p.requires_grad:
                 continue
             if p.grad is None:
-                raise RuntimeError('Model parameter did not receive gradient: ' + name + '. '
-                                   'Use the param in the forward pass or set requires_grad=False')
+                continue
             grads.append(p.grad.data)
         return grads
 

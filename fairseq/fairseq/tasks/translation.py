@@ -37,6 +37,8 @@ class TranslationTask(FairseqTask):
                             help='max number of tokens in the source sequence')
         parser.add_argument('--max-target-positions', default=1024, type=int, metavar='N',
                             help='max number of tokens in the target sequence')
+        parser.add_argument('--use-copy', default='False', type=str, metavar='BOOL',
+                            help='use copy (default: False)')
 
     def __init__(self, args, src_dict, tgt_dict):
         super().__init__(args)
@@ -47,6 +49,7 @@ class TranslationTask(FairseqTask):
     def setup_task(cls, args, **kwargs):
         args.left_pad_source = options.eval_bool(args.left_pad_source)
         args.left_pad_target = options.eval_bool(args.left_pad_target)
+        args.use_copy = options.eval_bool(args.use_copy)
 
         # find language pair automatically
         if args.source_lang is None or args.target_lang is None:
@@ -65,7 +68,7 @@ class TranslationTask(FairseqTask):
 
         return cls(args, src_dict, tgt_dict)
 
-    def load_dataset(self, split):
+    def load_dataset(self, split, kv_dict={}):
         """Load a dataset split."""
 
         def split_exists(src, tgt, lang):
@@ -85,22 +88,29 @@ class TranslationTask(FairseqTask):
         else:
             raise FileNotFoundError('Dataset not found: {} ({})'.format(split, self.args.data))
 
-        def indexed_dataset(path, dictionary):
+        def indexed_dataset(path, dictionary, src_tokens=None):
             if self.args.raw_text:
-                return IndexedRawTextDataset(path, dictionary)
+                return IndexedRawTextDataset(path, dictionary, src_tokens=src_tokens, reverse_order=self.args.reverse_order)
             elif IndexedInMemoryDataset.exists(path):
                 return IndexedInMemoryDataset(path, fix_lua_indexing=True)
             return None
 
         src_dataset = indexed_dataset(prefix + src, self.src_dict)
-        tgt_dataset = indexed_dataset(prefix + tgt, self.tgt_dict)
+        src_tokens = None
+        if self.args.raw_text:
+            src_tokens = src_dataset.words_list
+        tgt_dataset = indexed_dataset(prefix + tgt, self.tgt_dict, src_tokens=src_tokens)
+
         self.datasets[split] = LanguagePairDataset(
-            src_dataset, src_dataset.sizes, self.src_dict,
-            tgt_dataset, tgt_dataset.sizes, self.tgt_dict,
+            src_dataset, src_dataset.sent_len, self.src_dict,
+            tgt_dataset, tgt_dataset.sent_len, self.tgt_dict,
             left_pad_source=self.args.left_pad_source,
             left_pad_target=self.args.left_pad_target,
             max_source_positions=self.args.max_source_positions,
             max_target_positions=self.args.max_target_positions,
+            use_copy=self.args.use_copy,
+            n_repeat=kv_dict.get(split, 1),
+            name=split
         )
 
     @property

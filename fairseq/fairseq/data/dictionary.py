@@ -13,16 +13,17 @@ import torch
 
 class Dictionary(object):
     """A mapping from symbols to consecutive integers"""
-    def __init__(self, pad='<pad>', eos='</s>', unk='<unk>'):
-        self.unk_word, self.pad_word, self.eos_word = unk, pad, eos
+    def __init__(self, pad='<pad>', bos='<s>', eos='</s>', unk='<unk>'):
+        self.unk_word, self.pad_word, self.bos_word, self.eos_word = unk, pad, bos, eos
         self.symbols = []
         self.count = []
         self.indices = {}
         # dictionary indexing starts at 1 for consistency with Lua
         self.add_symbol('<Lua heritage>')
         self.pad_index = self.add_symbol(pad)
-        self.eos_index = self.add_symbol(eos)
         self.unk_index = self.add_symbol(unk)
+        self.bos_index = self.add_symbol(bos)
+        self.eos_index = self.add_symbol(eos)
         self.nspecial = len(self.symbols)
 
     def __eq__(self, other):
@@ -41,6 +42,14 @@ class Dictionary(object):
         """Returns the index of the specified symbol"""
         if sym in self.indices:
             return self.indices[sym]
+        # Our vocabulary is case-sensitive, try to eliminate some possible out-of-vocabulary words.
+        if sym.lower() in self.indices:
+            return self.indices[sym.lower()]
+        first_letter_up = sym[0].upper() + sym[1:]
+        if first_letter_up in self.indices:
+            return self.indices[first_letter_up]
+        if sym.upper() in self.indices:
+            return self.indices[sym.upper()]
         return self.unk_index
 
     def string(self, tensor, bpe_symbol=None, escape_unk=False):
@@ -54,6 +63,29 @@ class Dictionary(object):
         def token_string(i):
             if i == self.unk():
                 return self.unk_string(escape_unk)
+            else:
+                return self[i]
+
+        sent = ' '.join(token_string(i) for i in tensor if i != self.eos())
+        if bpe_symbol is not None:
+            sent = (sent + ' ').replace(bpe_symbol, '').rstrip()
+        return sent
+
+    def string_with_copy(self, tensor, src_tokens, bpe_symbol=None, escape_unk=False):
+        """Helper for converting a tensor of token indices to a string with copy mechanism.
+
+        Can optionally remove BPE symbols or escape <unk> words.
+        """
+        if torch.is_tensor(tensor) and tensor.dim() == 2:
+            return '\n'.join(self.string(t) for t in tensor)
+
+        def token_string(i):
+            if i == self.unk():
+                return self.unk_string(escape_unk)
+            elif i >= len(self.symbols):
+                if (i - len(self.symbols)) >= len(src_tokens): 
+                    return '<oov>'
+                return src_tokens[i - len(self.symbols)]
             else:
                 return self[i]
 
@@ -114,7 +146,9 @@ class Dictionary(object):
         new_count = self.count[:self.nspecial]
 
         c = Counter(dict(zip(self.symbols[self.nspecial:], self.count[self.nspecial:])))
-        for symbol, count in c.most_common(nwords - self.nspecial):
+        # fix the order of the dict words
+        cc = sorted(c.items(), key=lambda pair: (pair[1], pair[0]), reverse=True)[:nwords - self.nspecial]
+        for symbol, count in cc: 
             if count >= threshold:
                 new_indices[symbol] = len(new_symbols)
                 new_symbols.append(symbol)
@@ -133,7 +167,8 @@ class Dictionary(object):
                 i += 1
                 threshold_nwords += 1
 
-        assert len(new_symbols) % padding_factor == 0
+        if padding_factor > 0:
+            assert len(new_symbols) % padding_factor == 0
         assert len(new_symbols) == len(new_indices)
 
         self.count = list(new_count)
@@ -143,6 +178,11 @@ class Dictionary(object):
     def pad(self):
         """Helper to get index of pad symbol"""
         return self.pad_index
+
+
+    def bos(self):
+        """Helper to get index of begin-of-sentence symbol"""
+        return self.bos_index
 
     def eos(self):
         """Helper to get index of end-of-sentence symbol"""

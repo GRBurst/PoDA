@@ -105,3 +105,10 @@ ENV/
 
 # Generated files
 fairseq/temporal_convolution_tbc
+
+.idea/
+processed_giga*/
+models_giga/
+out_giga*/
+predictions/gigaword/
+predictions/cnn_dailymail/

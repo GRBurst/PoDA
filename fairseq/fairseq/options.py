@@ -99,6 +99,8 @@ def parse_args_and_arch(parser, input_args=None):
         args.update_freq = eval_str_list(args.update_freq, type=int)
     if hasattr(args, 'max_sentences_valid') and args.max_sentences_valid is None:
         args.max_sentences_valid = args.max_sentences
+    if hasattr(args, 'use_ema'):
+        args.use_ema = eval_bool(args.use_ema)
 
     # Apply architecture configuration.
     if hasattr(args, 'arch'):
@@ -136,10 +138,12 @@ def add_dataset_args(parser, train=False, gen=False):
                        help='maximum number of tokens in a batch')
     group.add_argument('--max-sentences', '--batch-size', type=int, metavar='N',
                        help='maximum number of sentences in a batch')
+    group.add_argument('--reverse-order', action='store_true',
+                       help='Reverse source and target sequence')
     if train:
         group.add_argument('--train-subset', default='train', metavar='SPLIT',
-                           choices=['train', 'valid', 'test'],
-                           help='data subset to use for training (train, valid, test)')
+                           help='comma separated list of data subsets to use for train'
+                           ' train:1.0,train1:1.2')
         group.add_argument('--valid-subset', default='valid', metavar='SPLIT',
                            help='comma separated list of data subsets to use for validation'
                                 ' (train, valid, valid1, test, test1)')
@@ -188,6 +192,10 @@ def add_optimization_args(parser):
                             ' (default is to normalize by number of tokens)')
     group.add_argument('--update-freq', default='1', metavar='N',
                        help='update parameters every N_i batches, when in epoch i')
+    parser.add_argument('--use-ema', default='True', type=str, metavar='BOOL',
+                        help='use ema (default: True)')
+    parser.add_argument('--warmup-updates', default=0, type=int, metavar='N',
+                        help='warmup the learning rate linearly for the first N updates')
 
     # Optimizer definitions can be found under fairseq/optim/
     group.add_argument('--optimizer', default='nag', metavar='OPT',
@@ -312,7 +320,7 @@ def add_model_args(parser):
     # 2) --arch argument
     # 3) --encoder/decoder-* arguments (highest priority)
     group.add_argument(
-        '--arch', '-a', default='fconv', metavar='ARCH', required=True,
+        '--arch', '-a', default='transformer', metavar='ARCH', required=True,
         choices=ARCH_MODEL_REGISTRY.keys(),
         help='model architecture: {} (default: fconv)'.format(
             ', '.join(ARCH_MODEL_REGISTRY.keys())),

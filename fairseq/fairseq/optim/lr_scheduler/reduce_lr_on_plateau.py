@@ -24,6 +24,15 @@ class ReduceLROnPlateau(FairseqLRScheduler):
         self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer.optimizer, patience=0, factor=args.lr_shrink)
 
+        # set defaults
+        args.warmup_updates = getattr(args, 'warmup_updates', 0)
+
+        self.lr = args.lr[0]
+        if args.warmup_updates > 0:
+            self.warmup_factor = 1. / args.warmup_updates
+        else:
+            self.warmup_factor = 1
+
     def state_dict(self):
         """Return the LR scheduler state dict."""
         return {
@@ -43,4 +52,11 @@ class ReduceLROnPlateau(FairseqLRScheduler):
             self.lr_scheduler.step(val_loss, epoch)
         else:
             self.lr_scheduler.last_epoch = epoch
+        return self.optimizer.get_lr()
+
+    def step_update(self, num_updates):
+        """Update the learning rate after each update."""
+        if self.args.warmup_updates > 0 and num_updates <= self.args.warmup_updates:
+            self.warmup_factor = num_updates / float(self.args.warmup_updates)
+            self.optimizer.set_lr(self.warmup_factor * self.lr)
         return self.optimizer.get_lr()

@@ -63,8 +63,11 @@ class SequenceScorer(object):
         for model in self.models:
             with torch.no_grad():
                 model.eval()
-                decoder_out = model.forward(**net_input)
-                attn = decoder_out[1]
+                src_tokens = net_input['src_tokens']
+                src_lengths = net_input['src_lengths']
+                prev_output_tokens = net_input['prev_output_tokens']
+                decoder_out = model.forward(src_tokens, src_lengths, prev_output_tokens)
+                attn = decoder_out['decoder_attn']
 
             probs = model.get_normalized_probs(decoder_out, log_probs=False, sample=sample).data
             if avg_probs is None:

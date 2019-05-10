@@ -18,6 +18,7 @@ class SequenceGenerator(object):
         self, models, tgt_dict, beam_size=1, minlen=1, maxlen=None, stop_early=True,
         normalize_scores=True, len_penalty=1, unk_penalty=0, retain_dropout=False,
         sampling=False, sampling_topk=-1, sampling_temperature=1,
+        use_copy=False, reverse_order=False
     ):
         """Generates translations of a given source sentence.
         Args:
@@ -29,10 +30,13 @@ class SequenceGenerator(object):
             normalize_scores: Normalize scores by the length of the output.
         """
         self.models = models
+        self.tgt_dict = tgt_dict
         self.pad = tgt_dict.pad()
         self.unk = tgt_dict.unk()
         self.eos = tgt_dict.eos()
-        self.vocab_size = len(tgt_dict)
+        self.dict_size = len(tgt_dict)
+        self.vocab_size = 0
+        self.use_copy = use_copy
         self.beam_size = beam_size
         self.minlen = minlen
         max_decoder_len = min(m.max_decoder_positions() for m in self.models)
@@ -46,6 +50,7 @@ class SequenceGenerator(object):
         self.sampling = sampling
         self.sampling_topk = sampling_topk
         self.sampling_temperature = sampling_temperature
+        self.reverse_order = reverse_order
 
     def cuda(self):
         for model in self.models:
@@ -97,6 +102,10 @@ class SequenceGenerator(object):
 
     def _generate(self, src_tokens, src_lengths, beam_size=None, maxlen=None, prefix_tokens=None):
         bsz, srclen = src_tokens.size()
+        self.vocab_size = self.dict_size
+        if self.use_copy:
+            self.vocab_size = self.dict_size + srclen
+
         maxlen = min(maxlen, self.maxlen) if maxlen is not None else self.maxlen
 
         # the max beam size is the dictionary size - 1, since we never select pad
@@ -150,7 +159,7 @@ class SequenceGenerator(object):
                 buffers[name] = type_of.new()
             return buffers[name]
 
-        def is_finished(sent, step, unfinalized_scores=None):
+        def is_finished(sent, unf_sent, step, unfinalized_scores=None):
             """
             Check whether we've finished generation for a given sentence, by
             comparing the worst score among finalized hypotheses to the best
@@ -162,7 +171,7 @@ class SequenceGenerator(object):
                     return True
                 # stop if the best unfinalized score is worse than the worst
                 # finalized one
-                best_unfinalized_score = unfinalized_scores[sent].max()
+                best_unfinalized_score = unfinalized_scores[unf_sent].max()
                 if self.normalize_scores:
                     best_unfinalized_score /= maxlen ** self.len_penalty
                 if worst_finalized[sent]['score'] >= best_unfinalized_score:
@@ -251,7 +260,7 @@ class SequenceGenerator(object):
             newly_finished = []
             for sent, unfin_idx in sents_seen:
                 # check termination conditions for this sentence
-                if not finished[sent] and is_finished(sent, step, unfinalized_scores):
+                if not finished[sent] and is_finished(sent, unfin_idx, step, unfinalized_scores):
                     finished[sent] = True
                     newly_finished.append(unfin_idx)
             return newly_finished
@@ -490,6 +499,14 @@ class SequenceGenerator(object):
         for sent in range(len(finalized)):
             finalized[sent] = sorted(finalized[sent], key=lambda r: r['score'], reverse=True)
 
+            if self.reverse_order:
+                for hypo in finalized[sent]:
+                    seq_len = hypo['tokens'].size(0)
+                    idx = torch.LongTensor([i for i in range(seq_len-1, -1, -1)]).cuda()
+                    for k in hypo.keys():
+                        v = hypo[k]
+                        if type(v) == torch.Tensor and v.size(-1) == seq_len:
+                            hypo[k] = hypo[k].index_select(-1, idx)
         return finalized
 
     def _decode(self, tokens, encoder_outs, incremental_states):
@@ -518,11 +535,11 @@ class SequenceGenerator(object):
     def _decode_one(self, tokens, model, encoder_out, incremental_states, log_probs):
         with torch.no_grad():
             if incremental_states[model] is not None:
-                decoder_out = list(model.decoder(tokens, encoder_out, incremental_states[model]))
+                decoder_out = model.decoder(tokens, encoder_out, incremental_states[model])
             else:
-                decoder_out = list(model.decoder(tokens, encoder_out))
-            decoder_out[0] = decoder_out[0][:, -1, :]
-            attn = decoder_out[1]
+                decoder_out = model.decoder(tokens, encoder_out)
+            decoder_out['decoder_out'] = decoder_out['decoder_out'][:, -1, :]
+            attn = decoder_out['decoder_attn']
             if attn is not None:
                 attn = attn[:, -1, :]
         probs = model.get_normalized_probs(decoder_out, log_probs=log_probs)

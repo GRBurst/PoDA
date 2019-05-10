@@ -38,7 +38,9 @@ def main(args):
 
     # Load ensemble
     print('| loading model(s) from {}'.format(args.path))
-    models, _ = utils.load_ensemble_for_inference(args.path.split(':'), task, model_arg_overrides=eval(args.model_overrides))
+    models, model_args_list = utils.load_ensemble_for_inference(args.path.split(':'), task, model_arg_overrides=eval(args.model_overrides))
+    for model_args in model_args_list:
+        assert (model_args.use_copy == args.use_copy) and args.raw_text
 
     # Optimize ensemble for generation
     for model in models:
@@ -72,6 +74,8 @@ def main(args):
             stop_early=(not args.no_early_stop), normalize_scores=(not args.unnormalized),
             len_penalty=args.lenpen, unk_penalty=args.unkpen,
             sampling=args.sampling, sampling_topk=args.sampling_topk, minlen=args.min_len,
+            use_copy=args.use_copy,
+            reverse_order=args.reverse_order
         )
 
     if use_cuda:
@@ -94,7 +98,9 @@ def main(args):
         for sample_id, src_tokens, target_tokens, hypos in translations:
             # Process input and ground truth
             has_target = target_tokens is not None
-            target_tokens = target_tokens.int().cpu() if has_target else None
+            target_words = target_tokens.int().cpu() if has_target else None
+            
+            src_words = task.dataset(args.gen_subset).src.words_list[sample_id]
 
             # Either retrieve the original sentences or regenerate them from tokens.
             if align_dict is not None:
@@ -102,11 +108,19 @@ def main(args):
                 target_str = task.dataset(args.gen_subset).tgt.get_original_text(sample_id)
             else:
                 src_str = src_dict.string(src_tokens, args.remove_bpe)
+                src_words_str = ' '.join(src_words).strip()
                 if has_target:
-                    target_str = tgt_dict.string(target_tokens, args.remove_bpe, escape_unk=True)
+                    print(args.use_copy)
+                    if args.use_copy:
+                        target_str = tgt_dict.string_with_copy(target_words, src_words, args.remove_bpe, escape_unk=True)
+                    else:
+                        target_str = tgt_dict.string(target_words, args.remove_bpe, escape_unk=True)
+
 
             if not args.quiet:
-                print('S-{}\t{}'.format(sample_id, src_str))
+                print('P-{}\t{}'.format(sample_id, src_str))
+                print('S-{}\t{}'.format(sample_id, src_words_str))
+
                 if has_target:
                     print('T-{}\t{}'.format(sample_id, target_str))
 
@@ -119,6 +133,8 @@ def main(args):
                     align_dict=align_dict,
                     tgt_dict=tgt_dict,
                     remove_bpe=args.remove_bpe,
+                    use_copy=args.use_copy,
+                    src_words=src_words, 
                 )
 
                 if not args.quiet:
@@ -139,9 +155,9 @@ def main(args):
                 if has_target and i == 0:
                     if align_dict is not None or args.remove_bpe is not None:
                         # Convert back to tokens for evaluation with unk replacement and/or without BPE
-                        target_tokens = tokenizer.Tokenizer.tokenize(
+                        target_words, raw_words = tokenizer.Tokenizer.tokenize(
                             target_str, tgt_dict, add_if_not_exist=True)
-                    scorer.add(target_tokens, hypo_tokens)
+                    scorer.add(target_words, hypo_tokens)
 
             wps_meter.update(src_tokens.size(0))
             t.log({'wps': round(wps_meter.avg)})

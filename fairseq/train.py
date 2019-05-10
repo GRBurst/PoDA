@@ -11,7 +11,7 @@ import itertools
 import os
 import math
 import torch
-
+import json
 from fairseq import data, distributed_utils, options, progress_bar, tasks, utils
 from fairseq.fp16_trainer import FP16Trainer
 from fairseq.trainer import Trainer
@@ -21,8 +21,8 @@ from fairseq.meters import AverageMeter, StopwatchMeter
 def main(args):
     if args.max_tokens is None:
         args.max_tokens = 6000
-    print(args)
 
+    print('CONFIG:\n%s' % json.dumps(vars(args), indent=4, sort_keys=True))
     if not torch.cuda.is_available():
         raise NotImplementedError('Training on CPU is not supported')
     torch.cuda.set_device(args.device_id)
@@ -36,9 +36,15 @@ def main(args):
 
     # Build model and criterion
     model = task.build_model(args)
+    print(model)
+
     criterion = task.build_criterion(args)
     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
+    print('| num. trainable model params: {}'.format(sum([p.numel() if p.requires_grad else 0 for p in model.parameters()])))
+    print('| num. un-trainable model params: {}'.format(sum([p.numel() if not p.requires_grad else 0 for p in model.parameters()])))
+
+    model.copy_da_params(args)
 
     # Build trainer
     if args.fp16:
@@ -55,8 +61,9 @@ def main(args):
 
     # Initialize dataloader
     max_positions = trainer.get_model().max_positions()
-    epoch_itr = data.EpochBatchIterator(
-        dataset=task.dataset(args.train_subset),
+    # batch list will be generated while init EpochBatchIterator
+    epoch_itr = data.EpochBatchIteratorDynamic(
+        dataset_dict={sub.split(':')[0].strip(): task.dataset(sub.split(':')[0].strip()) for sub in args.train_subset.split(',')},
         max_tokens=args.max_tokens,
         max_sentences=args.max_sentences_valid,
         max_positions=max_positions,
@@ -87,6 +94,8 @@ def main(args):
         train(args, trainer, task, epoch_itr)
 
         if epoch_itr.epoch % args.validate_interval == 0:
+            if args.use_ema:
+                trainer.copy_ema_params()
             valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
 
         # only use first validation loss to update the learning rate
@@ -95,6 +104,8 @@ def main(args):
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
             save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+            if args.use_ema:
+                trainer.restore_raw_params()
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
@@ -317,22 +328,30 @@ def load_checkpoint(args, trainer, epoch_itr):
 
 
 def load_dataset_splits(args, task, splits):
+    kv_dict = {kv.split(':')[0].strip(): float(kv.split(':')[1]) for kv in args.train_subset.split(',')}
+
     for split in splits:
+        if split == 'train':
+            for split_k in kv_dict:
+                task.load_dataset(split_k, kv_dict)
+                print('Train | {} {} {} examples'.format(args.data, split_k, len(task.dataset(split_k))))
+            continue
+
         for k in itertools.count():
             split_k = split + (str(k) if k > 0 else '')
             try:
                 task.load_dataset(split_k)
                 print('| {} {} {} examples'.format(args.data, split_k, len(task.dataset(split_k))))
             except FileNotFoundError as e:
-                if k > 0:
+                if k > 9:
                     break
-                raise e
 
 
 if __name__ == '__main__':
     parser = options.get_training_parser()
     args = options.parse_args_and_arch(parser)
 
+    torch.backends.cudnn.deterministic = True
     if args.distributed_port > 0 or args.distributed_init_method is not None:
         from distributed_train import main as distributed_main
 

@@ -16,7 +16,7 @@ from fairseq import data, options, tasks, tokenizer, utils
 from fairseq.sequence_generator import SequenceGenerator
 
 
-Batch = namedtuple('Batch', 'srcs tokens lengths')
+Batch = namedtuple('Batch', 'srcs words tokens lengths prev_output_tokens target')
 Translation = namedtuple('Translation', 'src_str hypos alignments')
 
 
@@ -33,13 +33,18 @@ def buffered_read(buffer_size):
 
 
 def make_batches(lines, args, src_dict, max_positions):
-    tokens = [
-        tokenizer.Tokenizer.tokenize(src_str, src_dict, add_if_not_exist=False).long()
+    pairs = [
+        tokenizer.Tokenizer.tokenize(src_str, src_dict, add_if_not_exist=False, reverse_order=args.reverse_order)
         for src_str in lines
     ]
+    tokens = [p[0].long() for p in pairs]
+    words = [p[1] for p in pairs]
     lengths = np.array([t.numel() for t in tokens])
+
+    trg_tokens = None
+    trg_lengths = None
     itr = data.EpochBatchIterator(
-        dataset=data.LanguagePairDataset(tokens, lengths, src_dict),
+        dataset=data.LanguagePairDataset(tokens, lengths, src_dict, trg_tokens, trg_lengths, src_dict, use_copy=args.use_copy),
         max_tokens=args.max_tokens,
         max_sentences=args.max_sentences,
         max_positions=max_positions,
@@ -47,9 +52,12 @@ def make_batches(lines, args, src_dict, max_positions):
     for batch in itr:
         yield Batch(
             srcs=[lines[i] for i in batch['id']],
+            words=words,
             tokens=batch['net_input']['src_tokens'],
             lengths=batch['net_input']['src_lengths'],
-        ), batch['id']
+            prev_output_tokens=batch['net_input']['prev_output_tokens'],
+            target=batch['target'],
+        ), batch['id'], batch
 
 
 def main(args):
@@ -73,7 +81,10 @@ def main(args):
     # Load ensemble
     print('| loading model(s) from {}'.format(args.path))
     model_paths = args.path.split(':')
-    models, model_args = utils.load_ensemble_for_inference(model_paths, task, model_arg_overrides=eval(args.model_overrides))
+    models, model_args_list = utils.load_ensemble_for_inference(model_paths, task, model_arg_overrides=eval(args.model_overrides))
+    for model_args in model_args_list:
+        assert(model_args.use_copy == args.use_copy)
+        assert(model_args.use_copy == args.raw_text)
 
     # Set dictionaries
     src_dict = task.source_dictionary
@@ -91,6 +102,8 @@ def main(args):
         normalize_scores=(not args.unnormalized), len_penalty=args.lenpen,
         unk_penalty=args.unkpen, sampling=args.sampling, sampling_topk=args.sampling_topk,
         minlen=args.min_len,
+        use_copy=args.use_copy,
+        reverse_order=args.reverse_order,
     )
 
     if use_cuda:
@@ -100,7 +113,7 @@ def main(args):
     # (None if no unknown word replacement, empty if no path to align dictionary)
     align_dict = utils.load_align_dict(args.replace_unk)
 
-    def make_result(src_str, hypos):
+    def make_result(src_str, src_words, hypos):
         result = Translation(
             src_str='O\t{}'.format(src_str),
             hypos=[],
@@ -116,18 +129,20 @@ def main(args):
                 align_dict=align_dict,
                 tgt_dict=tgt_dict,
                 remove_bpe=args.remove_bpe,
+                use_copy=args.use_copy,
+                src_words=src_words
             )
             result.hypos.append('H\t{}\t{}'.format(hypo['score'], hypo_str))
             result.alignments.append('A\t{}'.format(' '.join(map(lambda x: str(utils.item(x)), alignment))))
         return result
 
-    def process_batch(batch):
+    def process_batch(batch, raw_batch):
         tokens = batch.tokens
         lengths = batch.lengths
 
         if use_cuda:
-            tokens = tokens.cuda()
-            lengths = lengths.cuda()
+            tokens = utils.move_to_cuda(tokens)
+            lengths = utils.move_to_cuda(lengths)
 
         translations = translator.generate(
             tokens,
@@ -135,7 +150,7 @@ def main(args):
             maxlen=int(args.max_len_a * tokens.size(1) + args.max_len_b),
         )
 
-        return [make_result(batch.srcs[i], t) for i, t in enumerate(translations)]
+        return [make_result(batch.srcs[i], batch.words[i], t) for i, t in enumerate(translations)]
 
     if args.buffer_size > 1:
         print('| Sentence buffer size:', args.buffer_size)
@@ -143,9 +158,9 @@ def main(args):
     for inputs in buffered_read(args.buffer_size):
         indices = []
         results = []
-        for batch, batch_indices in make_batches(inputs, args, src_dict, models[0].max_positions()):
+        for batch, batch_indices, raw_batch in make_batches(inputs, args, src_dict, models[0].max_positions()):
             indices.extend(batch_indices)
-            results += process_batch(batch)
+            results += process_batch(batch, raw_batch)
 
         for i in np.argsort(indices):
             result = results[i]
@@ -156,6 +171,9 @@ def main(args):
 
 
 if __name__ == '__main__':
+    torch.set_printoptions(4)
+    torch.set_flush_denormal(True)
+
     parser = options.get_generation_parser(interactive=True)
     args = options.parse_args_and_arch(parser)
     main(args)

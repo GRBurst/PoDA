@@ -15,6 +15,26 @@ import traceback
 from torch.serialization import default_restore_location
 
 
+class EMA:
+    def __init__(self, mu=0.9995):
+        self.mu = mu
+        self.shadow = {}
+        self._ups = 0
+
+    def register(self, name, val):
+        self.shadow[name] = val.clone()
+
+    def __call__(self, name, x, updates=None):
+        decay = self.mu
+        updates = updates if updates is not None else (self._ups // len(self.shadow))
+        decay = min(decay, (1.0 + updates)/(10.0 + updates))
+        self.shadow[name] = (1 - decay) * x + decay * self.shadow[name]
+        self._ups += 1
+
+    def get(self, name):
+        return self.shadow[name]
+
+
 def torch_persistent_save(*args, **kwargs):
     for i in range(3):
         try:
@@ -146,18 +166,20 @@ def load_ensemble_for_inference(filenames, task, model_arg_overrides=None):
         state = torch.load(filename, map_location=lambda s, l: default_restore_location(s, 'cpu'))
         state = _upgrade_state_dict(state)
         states.append(state)
-    args = states[0]['args']
-    if model_arg_overrides is not None:
-        args = _override_model_args(args, model_arg_overrides)
 
     # build ensemble
     ensemble = []
+    ensemble_args = []
     for state in states:
+        args = state['args']
+        if model_arg_overrides is not None:
+            args = _override_model_args(args, model_arg_overrides)
+        ensemble_args.append(args)
         model = task.build_model(args)
         model.upgrade_state_dict(state['model'])
         model.load_state_dict(state['model'], strict=True)
         ensemble.append(model)
-    return ensemble, args
+    return ensemble, ensemble_args
 
 
 def _override_model_args(args, model_arg_overrides):
@@ -283,9 +305,12 @@ def replace_unk(hypo_str, src_str, alignment, align_dict, unk):
     return ' '.join(hypo_tokens)
 
 
-def post_process_prediction(hypo_tokens, src_str, alignment, align_dict, tgt_dict, remove_bpe):
+def post_process_prediction(hypo_tokens, src_str, alignment, align_dict, tgt_dict, remove_bpe, use_copy, src_words):
     from fairseq import tokenizer
-    hypo_str = tgt_dict.string(hypo_tokens, remove_bpe)
+    if use_copy:
+        hypo_str = tgt_dict.string_with_copy(hypo_tokens, src_words, remove_bpe)
+    else:
+        hypo_str = tgt_dict.string(hypo_tokens, remove_bpe)
     if align_dict is not None:
         hypo_str = replace_unk(hypo_str, src_str, alignment, align_dict, tgt_dict.unk_string())
     if align_dict is not None or remove_bpe is not None:

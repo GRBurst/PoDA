@@ -75,6 +75,10 @@ class IndexedDataset(torch.utils.data.Dataset):
         if i < 0 or i >= self.size:
             raise IndexError('index out of range')
 
+    @property
+    def sent_len(self):
+        return [self.sizes[dim] for dim in self.dim_offsets[:-1]]
+
     def __del__(self):
         self.data_file.close()
 
@@ -126,24 +130,36 @@ class IndexedRawTextDataset(IndexedDataset):
     """Takes a text file as input and binarizes it in memory at instantiation.
     Original lines are also kept in memory"""
 
-    def __init__(self, path, dictionary, append_eos=True, reverse_order=False):
+    def __init__(self, path, dictionary, append_eos=True, reverse_order=False, src_tokens=None):
         self.tokens_list = []
+        self.words_list = []
         self.lines = []
         self.sizes = []
         self.append_eos = append_eos
         self.reverse_order = reverse_order
+        self.src_tokens_list = src_tokens
         self.read_data(path, dictionary)
         self.size = len(self.tokens_list)
 
+    @property
+    def sent_len(self):
+        return self.sizes
+
     def read_data(self, path, dictionary):
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             for line in f:
+                src_tokens = None
+                if self.src_tokens_list is not None:
+                    src_tokens = self.src_tokens_list[len(self.lines)]
                 self.lines.append(line.strip('\n'))
-                tokens = Tokenizer.tokenize(
+                tokens, words = Tokenizer.tokenize(
                     line, dictionary, add_if_not_exist=False,
                     append_eos=self.append_eos, reverse_order=self.reverse_order,
-                ).long()
+                    src_tokens=src_tokens
+                )
+                tokens = tokens.long()
                 self.tokens_list.append(tokens)
+                self.words_list.append(words)
                 self.sizes.append(len(tokens))
         self.sizes = np.array(self.sizes)
 
