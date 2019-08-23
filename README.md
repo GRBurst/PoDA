@@ -1,6 +1,7 @@
 ## **P**re-training **o**f **D**enoising **A**uto-encoders (PoDA)
 
-Implementation of EMNLP 2019 paper "Denoising based Sequence-to-Sequence Pre-training for Text Generation"
+Implementation of EMNLP 2019 paper "[Denoising based Sequence-to-Sequence Pre-training for Text Generation](https://arxiv.org/pdf/1908.08206.pdf)", 
+[https://arxiv.org/abs/1908.08206](https://arxiv.org/abs/1908.08206) 
 
 Our code is based on [fairseq@1d79ed9b5f67a51e468d](https://github.com/pytorch/fairseq/),
 please check out the commit history of this repository to see what we have changed.
