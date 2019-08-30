@@ -1,10 +1,14 @@
-## **P**re-training **o**f **D**enoising **A**uto-encoders (PoDA)
+## [Denoising based Sequence-to-Sequence Pre-training for Text Generation](https://arxiv.org/pdf/1908.08206.pdf) 
 
-Implementation of EMNLP 2019 paper "[Denoising based Sequence-to-Sequence Pre-training for Text Generation](https://arxiv.org/pdf/1908.08206.pdf)", 
-[https://arxiv.org/abs/1908.08206](https://arxiv.org/abs/1908.08206) 
+
+Implementation of EMNLP 2019 paper 
+"[Denoising based Sequence-to-Sequence Pre-training for Text Generation](https://arxiv.org/pdf/1908.08206.pdf)",
+available at [https://arxiv.org/abs/1908.08206](https://arxiv.org/abs/1908.08206).
+
+PoDA is short for "**P**re-training **o**f **D**enoising **A**uto-encoders".
 
 Our code is based on [fairseq@1d79ed9b5f67a51e468d](https://github.com/pytorch/fairseq/),
-please check out the commit history of this repository to see what we have changed.
+the major changes can be found at [commit cf7ca94a](https://github.com/yuantiku/PoDA/commit/cf7ca94aebbce1901ee90045cb023cce9a6e4412).
 
 ### Download pre-trained models
 
@@ -14,6 +18,8 @@ Google drive: [https://drive.google.com/open?id=1bW5e8287purr6U81s97-_EFMb35fxwU
 
 Baidu Cloud Disk: [https://pan.baidu.com/s/1D5tumkNRhT2pcSb3CqzE5w](https://pan.baidu.com/s/1D5tumkNRhT2pcSb3CqzE5w), code: w6j5
 
+
+Unzip the pre-trained model to the folder `da-pretrained/`.
 
 ### Requirements
 
@@ -63,8 +69,11 @@ trained on the entire 3.8 million examples.
 
 ### Outputs by PoDA
 
-We provide the outputs by PoDA on four datasets in `./predictions/`,
-including CNN/Daily Mail, Gigaword, CoNLL-2014, and JFLEG.
+We provide the outputs by PoDA on four datasets in `predictions/`,
+including [CNN/Daily Mail](https://github.com/abisee/cnn-dailymail), 
+[Gigaword](https://github.com/harvardnlp/sent-summary), 
+[CoNLL-2014](https://www.comp.nus.edu.sg/~nlp/conll14st.html), 
+and [JFLEG](https://github.com/keisks/jfleg).
 
 
 ### Reproducibility
@@ -73,6 +82,20 @@ For CoNLL-2014 and JFLEG dataset,
 we require spell error check as a preprocessing step,
 which has dependency on our internal code.
 Hopefully you can use/train a good public spell checker.
+
+### Citation
+
+If you find our paper or this repository helpful, 
+please cite as follows:
+
+```
+@article{wang2019denoising,
+  title={Denoising based Sequence-to-Sequence Pre-training for Text Generation},
+  author={Wang, Liang and Zhao, Wei and Jia, Ruoyu and Li, Sujian and Liu, Jingming},
+  journal={arXiv preprint arXiv:1908.08206},
+  year={2019}
+}
+```
 
 ### TODO
 
