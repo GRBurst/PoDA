@@ -89,10 +89,11 @@ If you find our paper or this repository helpful,
 please cite as follows:
 
 ```
-@article{wang2019denoising,
+@inproceedings{wang2019denoising,
   title={Denoising based Sequence-to-Sequence Pre-training for Text Generation},
   author={Wang, Liang and Zhao, Wei and Jia, Ruoyu and Li, Sujian and Liu, Jingming},
-  journal={arXiv preprint arXiv:1908.08206},
+  booktitle={Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)},
+  pages={3994--4006},
   year={2019}
 }
 ```
