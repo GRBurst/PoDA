@@ -33,7 +33,7 @@ mkdir -p $OUT_DIR
 LOG_FILE=${OUT_DIR}log.out
 PID_FILE=${OUT_DIR}pid.out
 
-PYTHONPATH=$SOFTWARE_DIR:$PYTHONPATH CUDA_VISIBLE_DEVICES=$device_id nohup python3 -u $SOFTWARE_DIR/train.py  \
+PYTHONPATH=$SOFTWARE_DIR:$PYTHONPATH CUDA_VISIBLE_DEVICES=$device_id python3 -u $SOFTWARE_DIR/train.py  \
 $DATA_BIN_DIR  \
 --save-dir $OUT_DIR  \
 --max-epoch 100  \
@@ -54,8 +54,8 @@ $DATA_BIN_DIR  \
 --share-all-embeddings \
 --use-copy True \
 --log-interval 500 \
---da-pretrain-checkpoint $da_pretrain \
-> $LOG_FILE 2>&1 &
+--da-pretrain-checkpoint $da_pretrain
+# > $LOG_FILE 2>&1 &
 
-echo $! > $PID_FILE
-cat $PID_FILE
+# echo $! > $PID_FILE
+# cat $PID_FILE
